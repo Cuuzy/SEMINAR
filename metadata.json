@@ -1,0 +1,8 @@
+{
+  "name": "Mini Gathering Emas Pegadaian",
+  "description": "Landing page Mini Gathering Emas Pegadaian dengan formulir pendaftaran real-time, countdown timer, dan panel admin edit konten serta ekspor data Excel.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
