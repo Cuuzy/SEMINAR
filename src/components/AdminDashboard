@@ -1,0 +1,2342 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Users, Edit, FileSpreadsheet, Plus, Trash2, CheckCircle2, XCircle, Search, RefreshCw,
+  LogOut, Save, Calendar, MapPin, Clock, Shield, AlertCircle, Eye, ChevronRight, UserPlus,
+  BarChart3, Sparkles, Filter, Phone, Mail, Check, HelpCircle, TrendingUp, Tag, Gift,
+  Award, UserCheck, Star, Layers, ListOrdered, Mic, MessageSquare, Globe, Camera, Image, X,
+  Building2, AlertTriangle, Loader2, CheckSquare, QrCode
+} from 'lucide-react';
+import { EventContent, Participant, UpcEvent } from '../types';
+import { QrCheckInModal } from './QrCheckInModal';
+
+interface AdminDashboardProps {
+  token: string;
+  onLogout: () => void;
+  onContentUpdated: () => void;
+}
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({
+  token,
+  onLogout,
+  onContentUpdated
+}) => {
+  const [activeTab, setActiveTab] = useState<'participants' | 'upc-events' | 'content' | 'stats'>('participants');
+  
+  // Data states
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [content, setContent] = useState<EventContent | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [savingContent, setSavingContent] = useState(false);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // QR Scanner Modal State
+  const [showQrScanner, setShowQrScanner] = useState(false);
+
+  // Search & Filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [branchFilter, setBranchFilter] = useState<string>('ALL');
+
+  // UPC Seminar Event Modal State
+  const [showUpcModal, setShowUpcModal] = useState(false);
+  const [editingUpcId, setEditingUpcId] = useState<string | null>(null);
+  const [upcForm, setUpcForm] = useState<UpcEvent>({
+    id: '',
+    upcName: 'CP Ciledug',
+    code: 'CP-CLDG',
+    title: '',
+    eventDate: '',
+    eventTime: '09:00 - 12:00 WIB',
+    venueName: '',
+    address: '',
+    mapUrl: '',
+    quota: 50,
+    registered: 0,
+    contactPerson: '',
+    contactPhone: '',
+    status: 'OPEN',
+    description: '',
+    specialBenefits: []
+  });
+  const [benefitInput, setBenefitInput] = useState('');
+
+  // Manual Add Modal State
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [manualForm, setManualForm] = useState({
+    fullName: '',
+    phone: '',
+    email: '',
+    occupation: 'Karyawan Swasta',
+    branch: 'Pegadaian CP Senen',
+    investmentGoal: 'Tabungan Masa Depan',
+    attendanceCount: 1,
+    notes: 'Diinput manual oleh Admin',
+    status: 'Verified' as const
+  });
+
+  // Selected Participant Detail Modal State
+  const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
+
+  // Selected Participants for Batch Operations (Delete)
+  const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>([]);
+
+  // Delete Confirmation Modal State
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    ids: string[];
+    itemsPreview: { id: string; name: string; code: string; branch: string; status: string }[];
+    isDeleting: boolean;
+  } | null>(null);
+
+  // Fetch all initial data
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // Fetch Content
+      const resContent = await fetch('/api/content');
+      const dataContent = await resContent.json();
+      if (dataContent.success) {
+        setContent(dataContent.data);
+      }
+
+      // Fetch Participants
+      const resP = await fetch('/api/participants', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const dataP = await resP.json();
+      if (dataP.success) {
+        setParticipants(dataP.participants);
+      }
+    } catch (err: any) {
+      showNotice('error', 'Gagal memuat data admin: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [token]);
+
+  const showNotice = (type: 'success' | 'error', message: string) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), 4000);
+  };
+
+  // --- HANDLERS UNTUK ACARA SEMINAR PER CABANG / UPC ---
+  const handleOpenAddUpc = () => {
+    setEditingUpcId(null);
+    setUpcForm({
+      id: '',
+      upcName: 'CP Ciledug',
+      code: 'CP-CLDG',
+      title: 'Gathering & Edukasi Investasi Emas',
+      eventDate: 'Kamis, 20 Agustus 2026',
+      eventTime: '09:00 - 12:00 WIB',
+      venueName: 'Gedung Pertemuan Pegadaian',
+      address: 'Jl. Raya Utama Pegadaian',
+      mapUrl: 'https://maps.google.com',
+      quota: 50,
+      registered: 0,
+      contactPerson: 'Penanggung Jawab Acara',
+      contactPhone: '6281234567890',
+      status: 'OPEN',
+      description: 'Sesi edukasi investasi emas, tabungan emas, dan promo khusus bagi peserta gathering.',
+      specialBenefits: ['Gratis Tabungan Emas', 'Snack Box & Souvenir']
+    });
+    setBenefitInput('');
+    setShowUpcModal(true);
+  };
+
+  const handleOpenEditUpc = (evt: UpcEvent) => {
+    setEditingUpcId(evt.id);
+    setUpcForm({ ...evt, specialBenefits: evt.specialBenefits || [] });
+    setBenefitInput('');
+    setShowUpcModal(true);
+  };
+
+  const handleSaveUpcEvent = async () => {
+    if (!content) return;
+    if (!upcForm.upcName || !upcForm.title || !upcForm.eventDate || !upcForm.venueName) {
+      showNotice('error', 'Harap isi nama Cabang/UPC, judul seminar, tanggal, dan lokasi venue!');
+      return;
+    }
+
+    const currentList = content.upcEvents || [];
+    let updatedList: UpcEvent[] = [];
+
+    if (editingUpcId) {
+      updatedList = currentList.map(e => (e.id === editingUpcId ? { ...upcForm } : e));
+    } else {
+      const newId = 'upc-' + Date.now();
+      const newEvent: UpcEvent = {
+        ...upcForm,
+        id: newId,
+        code: upcForm.code || `UPC-${Math.floor(100 + Math.random() * 900)}`
+      };
+      updatedList = [newEvent, ...currentList];
+    }
+
+    const updatedContent = {
+      ...content,
+      upcEvents: updatedList
+    };
+
+    setContent(updatedContent);
+
+    try {
+      const res = await fetch('/api/content', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(updatedContent)
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || 'Gagal menyimpan acara.');
+
+      showNotice('success', editingUpcId ? 'Jadwal seminar berhasil diperbarui!' : 'Jadwal seminar baru berhasil dibuat!');
+      setShowUpcModal(false);
+      onContentUpdated();
+    } catch (err: any) {
+      showNotice('error', err.message);
+    }
+  };
+
+  const handleDeleteUpcEvent = async (id: string) => {
+    if (!content) return;
+    if (!confirm('Apakah Anda yakin ingin menghapus jadwal acara seminar ini?')) return;
+
+    const updatedList = (content.upcEvents || []).filter(e => e.id !== id);
+    const updatedContent = { ...content, upcEvents: updatedList };
+    setContent(updatedContent);
+
+    try {
+      const res = await fetch('/api/content', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(updatedContent)
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message);
+
+      showNotice('success', 'Acara seminar berhasil dihapus.');
+      onContentUpdated();
+    } catch (err: any) {
+      showNotice('error', err.message);
+    }
+  };
+
+  // --- EXCEL EXPORT HANDLER ---
+  const handleExportExcel = () => {
+    window.open(`/api/export/excel?token=${encodeURIComponent(token)}`, '_blank');
+    showNotice('success', 'File Excel (.xlsx) data peserta berhasil diunduh!');
+  };
+
+  // --- CONTENT EDIT SAVE ---
+  const handleSaveContent = async () => {
+    if (!content) return;
+    setSavingContent(true);
+
+    try {
+      const res = await fetch('/api/content', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(content)
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Gagal menyimpan perubahan.');
+      }
+
+      showNotice('success', 'Pengaturan Landing Page berhasil diperbarui!');
+      onContentUpdated();
+    } catch (err: any) {
+      showNotice('error', err.message);
+    } finally {
+      setSavingContent(false);
+    }
+  };
+
+  // --- CHANGE PARTICIPANT STATUS ---
+  const handleUpdateStatus = async (id: string, newStatus: Participant['status']) => {
+    try {
+      const res = await fetch(`/api/participants/${id}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message);
+
+      setParticipants(prev =>
+        prev.map(p => (p.id === id ? { ...p, status: newStatus } : p))
+      );
+      showNotice('success', `Status peserta berhasil diubah menjadi ${newStatus}.`);
+    } catch (err: any) {
+      showNotice('error', err.message);
+    }
+  };
+
+  // --- DELETE PARTICIPANTS OPTIMIZED LOGIC ---
+  const openDeleteSingleModal = (participant: Participant) => {
+    setDeleteConfirmModal({
+      isOpen: true,
+      title: 'Hapus Data Peserta',
+      description: `Apakah Anda yakin ingin menghapus data peserta "${participant.fullName}" (${participant.registrationCode})?`,
+      ids: [participant.id],
+      itemsPreview: [{
+        id: participant.id,
+        name: participant.fullName,
+        code: participant.registrationCode,
+        branch: participant.branch,
+        status: participant.status
+      }],
+      isDeleting: false
+    });
+  };
+
+  const openDeleteBatchModal = () => {
+    if (selectedParticipantIds.length === 0) return;
+    const selectedParticipants = participants.filter(p => selectedParticipantIds.includes(p.id));
+    setDeleteConfirmModal({
+      isOpen: true,
+      title: `Hapus ${selectedParticipantIds.length} Peserta Terpilih`,
+      description: `Konfirmasi penghapusan ${selectedParticipantIds.length} peserta terpilih dari database server.`,
+      ids: selectedParticipantIds,
+      itemsPreview: selectedParticipants.map(p => ({
+        id: p.id,
+        name: p.fullName,
+        code: p.registrationCode,
+        branch: p.branch,
+        status: p.status
+      })),
+      isDeleting: false
+    });
+  };
+
+  const openDeleteCancelledModal = () => {
+    const cancelled = participants.filter(p => p.status === 'Cancelled');
+    if (cancelled.length === 0) return;
+    setDeleteConfirmModal({
+      isOpen: true,
+      title: `Hapus Semua (${cancelled.length}) Peserta Batal`,
+      description: `Tindakan ini akan menghapus seluruh ${cancelled.length} peserta berstatus 'Cancelled' secara permanen dari database.`,
+      ids: cancelled.map(p => p.id),
+      itemsPreview: cancelled.map(p => ({
+        id: p.id,
+        name: p.fullName,
+        code: p.registrationCode,
+        branch: p.branch,
+        status: p.status
+      })),
+      isDeleting: false
+    });
+  };
+
+  const executeDeleteConfirm = async () => {
+    if (!deleteConfirmModal || deleteConfirmModal.ids.length === 0) return;
+
+    setDeleteConfirmModal(prev => prev ? { ...prev, isDeleting: true } : null);
+
+    try {
+      const isBatch = deleteConfirmModal.ids.length > 1;
+      let res;
+      if (isBatch) {
+        res = await fetch('/api/participants/batch-delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ ids: deleteConfirmModal.ids })
+        });
+      } else {
+        res = await fetch(`/api/participants/${deleteConfirmModal.ids[0]}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      }
+
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message);
+
+      const deletedIdsSet = new Set(deleteConfirmModal.ids);
+      setParticipants(prev => prev.filter(p => !deletedIdsSet.has(p.id)));
+      setSelectedParticipantIds(prev => prev.filter(id => !deletedIdsSet.has(id)));
+      if (selectedParticipant && deletedIdsSet.has(selectedParticipant.id)) {
+        setSelectedParticipant(null);
+      }
+
+      showNotice('success', isBatch ? `${deleteConfirmModal.ids.length} data peserta berhasil dihapus.` : 'Data peserta berhasil dihapus.');
+      setDeleteConfirmModal(null);
+    } catch (err: any) {
+      showNotice('error', err.message);
+      setDeleteConfirmModal(prev => prev ? { ...prev, isDeleting: false } : null);
+    }
+  };
+
+  // --- ADD MANUAL PARTICIPANT ---
+  const handleAddManualParticipant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/participants/manual', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(manualForm)
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message);
+
+      setParticipants(prev => [data.participant, ...prev]);
+      setShowAddModal(false);
+      showNotice('success', 'Peserta manual berhasil ditambahkan!');
+      setManualForm({
+        fullName: '',
+        phone: '',
+        email: '',
+        occupation: 'Karyawan Swasta',
+        branch: 'Pegadaian CP Senen',
+        investmentGoal: 'Tabungan Masa Depan',
+        attendanceCount: 1,
+        notes: 'Diinput manual oleh Admin',
+        status: 'Verified'
+      });
+    } catch (err: any) {
+      showNotice('error', err.message);
+    }
+  };
+
+  // --- CONTENT ARRAY HELPERS ---
+  const handleAddBenefit = () => {
+    if (!content) return;
+    const newB = {
+      id: 'b_' + Date.now(),
+      title: 'Fasilitas / Keuntungan Baru',
+      description: 'Penjelasan fasilitas atau benefit yang akan diperoleh peserta.',
+      iconName: 'Sparkles'
+    };
+    setContent({ ...content, benefits: [...(content.benefits || []), newB] });
+  };
+
+  const handleUpdateBenefit = (index: number, field: string, value: string) => {
+    if (!content) return;
+    const updated = [...(content.benefits || [])];
+    updated[index] = { ...updated[index], [field]: value };
+    setContent({ ...content, benefits: updated });
+  };
+
+  const handleDeleteBenefit = (index: number) => {
+    if (!content) return;
+    const updated = (content.benefits || []).filter((_, i) => i !== index);
+    setContent({ ...content, benefits: updated });
+  };
+
+  const handleAddSpeaker = () => {
+    if (!content) return;
+    const newS = {
+      id: 's_' + Date.now(),
+      name: 'Nama Narasumber',
+      title: 'Jabatan / Keahlian',
+      company: 'Instansi / Perusahaan',
+      photoUrl: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?w=400&auto=format&fit=crop&q=80'
+    };
+    setContent({ ...content, speakers: [...(content.speakers || []), newS] });
+  };
+
+  const handleUpdateSpeaker = (index: number, field: string, value: string) => {
+    if (!content) return;
+    const updated = [...(content.speakers || [])];
+    updated[index] = { ...updated[index], [field]: value };
+    setContent({ ...content, speakers: updated });
+  };
+
+  const handleDeleteSpeaker = (index: number) => {
+    if (!content) return;
+    const updated = (content.speakers || []).filter((_, i) => i !== index);
+    setContent({ ...content, speakers: updated });
+  };
+
+  const handleAddAgenda = () => {
+    if (!content) return;
+    const newA = {
+      id: 'a_' + Date.now(),
+      time: '12:00 - 12:30',
+      title: 'Nama Sesi Acara',
+      description: 'Penjelasan singkat aktivitas di sesi ini.'
+    };
+    setContent({ ...content, agenda: [...(content.agenda || []), newA] });
+  };
+
+  const handleUpdateAgenda = (index: number, field: string, value: string) => {
+    if (!content) return;
+    const updated = [...(content.agenda || [])];
+    updated[index] = { ...updated[index], [field]: value };
+    setContent({ ...content, agenda: updated });
+  };
+
+  const handleDeleteAgenda = (index: number) => {
+    if (!content) return;
+    const updated = (content.agenda || []).filter((_, i) => i !== index);
+    setContent({ ...content, agenda: updated });
+  };
+
+  const handleAddFaq = () => {
+    if (!content) return;
+    const newF = {
+      question: 'Pertanyaan baru?',
+      answer: 'Jawaban penjelasan untuk pertanyaan ini.'
+    };
+    setContent({ ...content, faq: [...(content.faq || []), newF] });
+  };
+
+  const handleUpdateFaq = (index: number, field: 'question' | 'answer', value: string) => {
+    if (!content) return;
+    const updated = [...(content.faq || [])];
+    updated[index] = { ...updated[index], [field]: value };
+    setContent({ ...content, faq: updated });
+  };
+
+  const handleDeleteFaq = (index: number) => {
+    if (!content) return;
+    const updated = (content.faq || []).filter((_, i) => i !== index);
+    setContent({ ...content, faq: updated });
+  };
+
+  const handleAddGallery = () => {
+    if (!content) return;
+    const newG = {
+      id: 'g_' + Date.now(),
+      url: 'https://images.unsplash.com/photo-1511578314322-379afb476865?w=800&auto=format&fit=crop&q=80',
+      title: 'Foto Dokumentasi Acara Baru',
+      caption: 'Penjelasan singkat aktivitas atau momen foto dokumentasi gathering.'
+    };
+    setContent({ ...content, gallery: [...(content.gallery || []), newG] });
+  };
+
+  const handleUpdateGallery = (index: number, field: string, value: string) => {
+    if (!content) return;
+    const updated = [...(content.gallery || [])];
+    updated[index] = { ...updated[index], [field]: value };
+    setContent({ ...content, gallery: updated });
+  };
+
+  const handleDeleteGallery = (index: number) => {
+    if (!content) return;
+    const updated = (content.gallery || []).filter((_, i) => i !== index);
+    setContent({ ...content, gallery: updated });
+  };
+
+  const handleAddService = () => {
+    if (!content) return;
+    const updated = [...(content.footerServices || []), 'Layanan Baru'];
+    setContent({ ...content, footerServices: updated });
+  };
+
+  const handleUpdateService = (index: number, value: string) => {
+    if (!content) return;
+    const updated = [...(content.footerServices || [])];
+    updated[index] = value;
+    setContent({ ...content, footerServices: updated });
+  };
+
+  const handleDeleteService = (index: number) => {
+    if (!content) return;
+    const updated = (content.footerServices || []).filter((_, i) => i !== index);
+    setContent({ ...content, footerServices: updated });
+  };
+
+  // Filtered Participants Calculation
+  const filteredParticipants = participants.filter(p => {
+    const q = searchQuery.trim().toLowerCase();
+    const matchesStatus = statusFilter === 'ALL' || p.status === statusFilter;
+    const matchesBranchFilter = branchFilter === 'ALL' || (p.branch || '').toLowerCase().includes(branchFilter.toLowerCase());
+
+    if (!q) {
+      return matchesStatus && matchesBranchFilter;
+    }
+
+    const cleanQueryDigits = q.replace(/\D/g, '');
+    const cleanPhone = p.phone.replace(/\D/g, '');
+
+    const matchesName = p.fullName.toLowerCase().includes(q);
+    const matchesPhone = p.phone.toLowerCase().includes(q) || (cleanQueryDigits.length >= 2 && cleanPhone.includes(cleanQueryDigits));
+    const matchesEmail = p.email.toLowerCase().includes(q);
+    const matchesCode = p.registrationCode.toLowerCase().includes(q);
+    const matchesBranch = (p.branch || '').toLowerCase().includes(q);
+
+    const matchesSearch = matchesName || matchesPhone || matchesEmail || matchesCode || matchesBranch;
+
+    return matchesSearch && matchesStatus && matchesBranchFilter;
+  });
+
+  // --- SELECTION & BATCH DELETE PARTICIPANTS ---
+  const isAllSelected = filteredParticipants.length > 0 && filteredParticipants.every(p => selectedParticipantIds.includes(p.id));
+
+  const handleToggleSelectAll = () => {
+    if (isAllSelected) {
+      const filteredIdsSet = new Set(filteredParticipants.map(p => p.id));
+      setSelectedParticipantIds(prev => prev.filter(id => !filteredIdsSet.has(id)));
+    } else {
+      const filteredIds = filteredParticipants.map(p => p.id);
+      setSelectedParticipantIds(prev => Array.from(new Set([...prev, ...filteredIds])));
+    }
+  };
+
+  const handleToggleSelectParticipant = (id: string) => {
+    setSelectedParticipantIds(prev =>
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const cancelledParticipantsCount = participants.filter(p => p.status === 'Cancelled').length;
+
+  const totalSeats = participants.reduce((sum, p) => sum + (p.attendanceCount || 1), 0);
+  const totalVerified = participants.filter(p => p.status === 'Verified' || p.status === 'Attended').length;
+
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans">
+      
+      {/* Top Navigation Bar */}
+      <header className="bg-emerald-950 text-white border-b border-amber-400/30 sticky top-0 z-40 shadow-md">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3">
+          
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-amber-400 text-emerald-950 font-black flex items-center justify-center text-xs sm:text-sm shadow-sm shrink-0">
+              ITO
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-extrabold text-sm sm:text-base tracking-tight text-white">Panel Admin</span>
+                <span className="text-[9px] sm:text-[10px] bg-amber-400/20 text-amber-300 font-bold px-1.5 py-0.5 rounded border border-amber-400/30">
+                  ito31102002
+                </span>
+              </div>
+              <p className="text-[10px] sm:text-[11px] text-emerald-300 truncate max-w-[180px] sm:max-w-none">Mini Gathering Emas Pegadaian</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 ml-auto sm:ml-0">
+            <button
+              onClick={() => setShowQrScanner(true)}
+              className="relative group px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-emerald-950 font-black text-xs flex items-center gap-1.5 shadow-md hover:shadow-lg hover:shadow-amber-400/20 transition-all duration-200 cursor-pointer border border-amber-200/80 overflow-hidden shrink-0"
+            >
+              <span className="absolute inset-0 w-full h-full bg-white/20 group-hover:translate-x-full transition-transform duration-700 ease-out -translate-x-full" />
+              <QrCode className="relative w-4 h-4 text-emerald-950 shrink-0" />
+              <span className="relative font-extrabold tracking-tight">Scan QR</span>
+            </button>
+
+            <button
+              onClick={fetchData}
+              className="p-2 rounded-xl bg-emerald-900 hover:bg-emerald-800 text-emerald-200 transition-colors cursor-pointer shrink-0"
+              title="Refresh Data"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+
+            <button
+              onClick={onLogout}
+              className="px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-xl bg-rose-600/80 hover:bg-rose-600 text-white font-semibold text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+              title="Keluar dari Admin"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline">Keluar</span>
+            </button>
+          </div>
+
+        </div>
+
+        {/* Admin Tabs Bar */}
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex items-center gap-1.5 sm:gap-2 overflow-x-auto border-t border-emerald-900/60 pt-1.5 pb-2 no-scrollbar scroll-smooth">
+          <button
+            onClick={() => setActiveTab('participants')}
+            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+              activeTab === 'participants'
+                ? 'bg-amber-400 text-emerald-950 shadow-sm'
+                : 'text-emerald-200 hover:bg-emerald-900'
+            }`}
+          >
+            <Users className="w-4 h-4 shrink-0" />
+            <span>Database Peserta ({participants.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('upc-events')}
+            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+              activeTab === 'upc-events'
+                ? 'bg-amber-400 text-emerald-950 shadow-sm'
+                : 'text-emerald-200 hover:bg-emerald-900'
+            }`}
+          >
+            <Building2 className="w-4 h-4 shrink-0" />
+            <span>Kelola Acara ({content?.upcEvents?.length || 0})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('content')}
+            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+              activeTab === 'content'
+                ? 'bg-amber-400 text-emerald-950 shadow-sm'
+                : 'text-emerald-200 hover:bg-emerald-900'
+            }`}
+          >
+            <Edit className="w-4 h-4 shrink-0" />
+            <span>Landing Page</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('stats')}
+            className={`px-3 sm:px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+              activeTab === 'stats'
+                ? 'bg-amber-400 text-emerald-950 shadow-sm'
+                : 'text-emerald-200 hover:bg-emerald-900'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 shrink-0" />
+            <span>Analisis</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Notification Toast */}
+      {notification && (
+        <div className="fixed bottom-5 right-5 z-50 animate-bounce">
+          <div className={`px-5 py-3 rounded-2xl shadow-2xl text-xs font-bold flex items-center gap-2 text-white ${
+            notification.type === 'success' ? 'bg-emerald-700' : 'bg-rose-700'
+          }`}>
+            <Sparkles className="w-4 h-4" />
+            {notification.message}
+          </div>
+        </div>
+      )}
+
+      {/* Main Admin Area */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
+        
+        {/* ================= TAB 1: PARTICIPANT DATABASE ================= */}
+        {activeTab === 'participants' && (
+          <div className="space-y-6">
+            
+            {/* Metric Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                <p className="text-xs font-semibold text-slate-500">Total Pendaftar</p>
+                <p className="text-2xl font-extrabold text-slate-900 mt-1">{participants.length} Orang</p>
+                <p className="text-[11px] text-emerald-600 mt-1 font-medium">({totalSeats} Total Kursi Terisi)</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                <p className="text-xs font-semibold text-slate-500">Peserta Terverifikasi</p>
+                <p className="text-2xl font-extrabold text-emerald-700 mt-1">{totalVerified} Orang</p>
+                <p className="text-[11px] text-slate-500 mt-1">Siap Hadir di Lokasi</p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                <p className="text-xs font-semibold text-slate-500">Sisa Kuota Kursi</p>
+                <p className="text-2xl font-extrabold text-amber-600 mt-1">
+                  {content ? Math.max(0, content.totalQuota - totalSeats) : 0} Kursi
+                </p>
+                <p className="text-[11px] text-slate-500 mt-1">Dari Kuota {content?.totalQuota || 100}</p>
+              </div>
+
+              <div className="bg-emerald-900 text-white p-5 rounded-2xl border border-amber-400/30 shadow-md flex flex-col justify-between">
+                <div>
+                  <p className="text-xs font-bold text-amber-300 uppercase">Aksi Ekspor Data</p>
+                  <p className="text-xs text-emerald-200 mt-0.5">Unduh seluruh pendaftar ke spreadsheet Excel.</p>
+                </div>
+                <button
+                  onClick={handleExportExcel}
+                  className="mt-3 w-full py-2.5 px-3 bg-amber-400 hover:bg-amber-300 text-emerald-950 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  Ekspor ke Format Excel (.xlsx)
+                </button>
+              </div>
+            </div>
+
+            {/* Action Bar & Search */}
+            <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+              
+              {/* Top Row: Search Bar */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="relative w-full sm:w-96">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <input
+                    type="text"
+                    placeholder="Cari nama, No. HP, email, tiket..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-8 py-2.5 sm:py-2 text-xs text-slate-900 focus:outline-none focus:border-emerald-600 focus:bg-white transition-all"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 transition-colors p-0.5 cursor-pointer"
+                      title="Bersihkan Pencarian"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {(searchQuery || statusFilter !== 'ALL' || branchFilter !== 'ALL') && (
+                  <div className="text-xs font-medium text-slate-600 bg-amber-50 px-3 py-1.5 rounded-xl border border-amber-200/80 flex items-center gap-1.5 w-full sm:w-auto justify-center">
+                    <span className="font-bold text-amber-800">{filteredParticipants.length}</span>
+                    <span>dari {participants.length} peserta ditemukan</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Bottom Row: Filters & Buttons */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                <div className="grid grid-cols-1 xs:grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto">
+                  {/* Filter UPC / Cabang */}
+                  <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-300 text-xs font-medium text-slate-700 w-full sm:w-auto">
+                    <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                    <span className="shrink-0">Cabang:</span>
+                    <select
+                      value={branchFilter}
+                      onChange={(e) => setBranchFilter(e.target.value)}
+                      className="bg-transparent font-bold text-emerald-800 focus:outline-none cursor-pointer w-full text-xs"
+                    >
+                      <option value="ALL">Semua Cabang/UPC</option>
+                      <option value="Ciledug">CP Ciledug</option>
+                      <option value="Pabuaran">UPC Pabuaran</option>
+                      <option value="Sindanglaut">UPC Sindanglaut</option>
+                      <option value="Sedong">UPC Sedong</option>
+                      <option value="Karangsembung">UPC Karangsembung</option>
+                    </select>
+                  </div>
+
+                  {/* Filter Status */}
+                  <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-300 text-xs font-medium text-slate-700 w-full sm:w-auto">
+                    <Filter className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                    <span className="shrink-0">Status:</span>
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                      className="bg-transparent font-bold text-emerald-800 focus:outline-none cursor-pointer w-full text-xs"
+                    >
+                      <option value="ALL">Semua Status</option>
+                      <option value="Registered">Registered</option>
+                      <option value="Verified">Verified</option>
+                      <option value="Attended">Attended</option>
+                      <option value="Cancelled">Cancelled</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap pt-1 sm:pt-0">
+                  {cancelledParticipantsCount > 0 && (
+                    <button
+                      onClick={openDeleteCancelledModal}
+                      className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer w-full sm:w-auto"
+                      title="Hapus semua peserta berstatus Cancelled"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Hapus ({cancelledParticipantsCount}) Batal</span>
+                    </button>
+                  )}
+
+                  {selectedParticipantIds.length > 0 && (
+                    <button
+                      onClick={openDeleteBatchModal}
+                      className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer animate-fade-in w-full sm:w-auto"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Hapus ({selectedParticipantIds.length}) Terpilih</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => setShowQrScanner(true)}
+                    className="relative group px-3.5 py-2 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-emerald-950 font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer border border-amber-200/80 overflow-hidden flex-1 sm:flex-initial"
+                  >
+                    <QrCode className="w-4 h-4 text-emerald-950 shrink-0" />
+                    <span className="font-extrabold tracking-tight">Scan QR Check-In</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowAddModal(true)}
+                    className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer flex-1 sm:flex-initial"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>Tambah Manual</span>
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Mobile View Toggle Select All Row */}
+            <div className="flex md:hidden items-center justify-between bg-slate-200/60 p-2.5 rounded-xl text-xs text-slate-700 font-bold">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  onChange={handleToggleSelectAll}
+                  className="w-4 h-4 accent-emerald-700 rounded cursor-pointer"
+                />
+                <span>Pilih Semua Peserta ({filteredParticipants.length})</span>
+              </label>
+              <span className="text-[10px] text-slate-500 font-medium">Tampilan HP (Mobile)</span>
+            </div>
+
+            {/* Mobile Responsive Participant Card List (visible on Mobile screens) */}
+            <div className="block md:hidden space-y-3">
+              {filteredParticipants.length === 0 ? (
+                <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 text-xs">
+                  Tidak ditemukan data peserta yang sesuai dengan pencarian.
+                </div>
+              ) : (
+                filteredParticipants.map((p, idx) => {
+                  const isSelected = selectedParticipantIds.includes(p.id);
+                  const cleanPhone = p.phone.replaceAll(/[^0-9]/g, '');
+                  const waUrl = `https://wa.me/${cleanPhone.startsWith('0') ? '62' + cleanPhone.slice(1) : cleanPhone}`;
+
+                  return (
+                    <div
+                      key={p.id}
+                      className={`bg-white p-4 rounded-2xl border shadow-xs transition-all space-y-3 ${
+                        isSelected ? 'border-amber-400 bg-amber-50/60' : 'border-slate-200'
+                      }`}
+                    >
+                      {/* Card Header: Checkbox + Name + Actions */}
+                      <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2.5">
+                        <div className="flex items-start gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => handleToggleSelectParticipant(p.id)}
+                            className="w-4 h-4 accent-emerald-700 rounded cursor-pointer shrink-0 mt-0.5"
+                          />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-[10px] text-slate-400 font-bold">#{idx + 1}</span>
+                              <h4 className="font-extrabold text-slate-900 text-sm leading-tight">{p.fullName}</h4>
+                            </div>
+                            {p.notes && <p className="text-[10px] text-slate-400 font-normal italic truncate max-w-[200px] mt-0.5">{p.notes}</p>}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => setSelectedParticipant(p)}
+                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                            title="Detail"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => openDeleteSingleModal(p)}
+                            className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
+                            title="Hapus"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Ticket Code & Status Select */}
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="font-mono font-extrabold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/80">
+                          {p.registrationCode}
+                        </span>
+
+                        <select
+                          value={p.status}
+                          onChange={(e) => handleUpdateStatus(p.id, e.target.value as Participant['status'])}
+                          className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border cursor-pointer ${
+                            p.status === 'Verified' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' :
+                            p.status === 'Attended' ? 'bg-blue-100 text-blue-800 border-blue-300' :
+                            p.status === 'Cancelled' ? 'bg-rose-100 text-rose-800 border-rose-300' :
+                            'bg-amber-100 text-amber-800 border-amber-300'
+                          }`}
+                        >
+                          <option value="Registered">Registered</option>
+                          <option value="Verified">Verified</option>
+                          <option value="Attended">Attended</option>
+                          <option value="Cancelled">Cancelled</option>
+                        </select>
+                      </div>
+
+                      {/* Info Grid */}
+                      <div className="grid grid-cols-2 gap-2 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-200/60">
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-medium">WhatsApp:</span>
+                          <a
+                            href={waUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-bold text-emerald-800 flex items-center gap-1 hover:underline mt-0.5"
+                          >
+                            <Phone className="w-3 h-3 text-emerald-600 shrink-0" />
+                            <span className="truncate">{p.phone}</span>
+                          </a>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-medium">Cabang / UPC:</span>
+                          <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5 truncate">
+                            <Building2 className="w-3 h-3 text-slate-500 shrink-0" />
+                            <span>{p.branch}</span>
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-medium">Pekerjaan:</span>
+                          <span className="font-medium text-slate-800 truncate block">{p.occupation || '-'}</span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-medium">Kehadiran:</span>
+                          <span className="font-extrabold text-emerald-900 bg-emerald-100/80 px-2 py-0.5 rounded text-[11px] inline-block mt-0.5">
+                            {p.attendanceCount} Orang
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Desktop / Tablet Data Table (visible on MD screens and above) */}
+            <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-600 text-[11px] font-extrabold uppercase tracking-wider border-b border-slate-200">
+                      <th className="py-3.5 px-3 text-center w-10">
+                        <input
+                          type="checkbox"
+                          checked={isAllSelected}
+                          onChange={handleToggleSelectAll}
+                          className="w-4 h-4 accent-emerald-700 rounded cursor-pointer"
+                          title="Pilih Semua Peserta"
+                        />
+                      </th>
+                      <th className="py-3.5 px-3">No</th>
+                      <th className="py-3.5 px-4">Kode Tiket</th>
+                      <th className="py-3.5 px-4">Nama Lengkap</th>
+                      <th className="py-3.5 px-4">Kontak WA / Email</th>
+                      <th className="py-3.5 px-4">Pekerjaan</th>
+                      <th className="py-3.5 px-4">Cabang</th>
+                      <th className="py-3.5 px-4">Kehadiran</th>
+                      <th className="py-3.5 px-4">Status</th>
+                      <th className="py-3.5 px-4 text-center">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+                    {filteredParticipants.length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className="py-12 text-center text-slate-400">
+                          Tidak ditemukan data peserta yang sesuai dengan pencarian.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredParticipants.map((p, idx) => {
+                        const isSelected = selectedParticipantIds.includes(p.id);
+                        return (
+                          <tr key={p.id} className={`hover:bg-emerald-50/50 transition-colors ${isSelected ? 'bg-amber-50/60' : ''}`}>
+                            <td className="py-3 px-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleSelectParticipant(p.id)}
+                                className="w-4 h-4 accent-emerald-700 rounded cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-3 px-3 font-mono font-bold text-slate-400">{idx + 1}</td>
+                            <td className="py-3 px-4 font-mono font-bold text-emerald-800">{p.registrationCode}</td>
+                            <td className="py-3 px-4 font-bold text-slate-900">
+                              {p.fullName}
+                              {p.notes && <span className="block text-[10px] text-slate-400 font-normal italic truncate max-w-[160px]">{p.notes}</span>}
+                            </td>
+                            <td className="py-3 px-4">
+                              <p className="font-semibold text-slate-800">{p.phone}</p>
+                              <p className="text-[10px] text-slate-500">{p.email}</p>
+                            </td>
+                            <td className="py-3 px-4">{p.occupation}</td>
+                            <td className="py-3 px-4">{p.branch}</td>
+                            <td className="py-3 px-4 font-bold text-emerald-900">
+                              <span className="bg-emerald-100 px-2 py-0.5 rounded">{p.attendanceCount} Orang</span>
+                            </td>
+                            <td className="py-3 px-4">
+                              <select
+                                value={p.status}
+                                onChange={(e) => handleUpdateStatus(p.id, e.target.value as Participant['status'])}
+                                className={`text-[11px] font-bold px-2 py-1 rounded-lg border cursor-pointer ${
+                                  p.status === 'Verified' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' :
+                                  p.status === 'Attended' ? 'bg-blue-100 text-blue-800 border-blue-300' :
+                                  p.status === 'Cancelled' ? 'bg-rose-100 text-rose-800 border-rose-300' :
+                                  'bg-amber-100 text-amber-800 border-amber-300'
+                                }`}
+                              >
+                                <option value="Registered">Registered</option>
+                                <option value="Verified">Verified</option>
+                                <option value="Attended">Attended</option>
+                                <option value="Cancelled">Cancelled</option>
+                              </select>
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => setSelectedParticipant(p)}
+                                  className="p-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                                  title="Detail Peserta"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => openDeleteSingleModal(p)}
+                                  className="p-1.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
+                                  title="Hapus Peserta Ini"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Floating Selection Batch Action Dock */}
+            {selectedParticipantIds.length > 0 && (
+              <div className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-40 w-[92vw] sm:w-auto bg-slate-900/95 text-white backdrop-blur-md px-4 py-2.5 sm:px-5 sm:py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center justify-between sm:justify-start gap-2.5 sm:gap-4 animate-slide-up">
+                <div className="flex items-center gap-2 border-r border-slate-700 pr-3 sm:pr-4">
+                  <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="text-xs font-bold">{selectedParticipantIds.length} Terpilih</span>
+                </div>
+
+                <button
+                  onClick={handleToggleSelectAll}
+                  className="text-xs text-slate-300 hover:text-white transition-colors cursor-pointer underline underline-offset-2"
+                >
+                  {isAllSelected ? 'Batalkan' : 'Pilih Semua'}
+                </button>
+
+                <button
+                  onClick={openDeleteBatchModal}
+                  className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition-all cursor-pointer hover:scale-105"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Hapus ({selectedParticipantIds.length})</span>
+                </button>
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* ================= TAB: KELOLA ACARA & SEMINAR PER CABANG / UPC ================= */}
+        {activeTab === 'upc-events' && content && (
+          <div className="space-y-6">
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-6 h-6 text-emerald-700" />
+                  <h2 className="text-xl font-extrabold text-slate-900">Kelola Acara & Lokasi Seminar per Cabang / UPC</h2>
+                </div>
+                <p className="text-xs text-slate-500 mt-1 max-w-2xl">
+                  Buat dan atur lokasi pelaksanaan seminar/gathering edukasi emas di berbagai Cabang & UPC Pegadaian (seperti CP Ciledug, UPC Pabuaran, UPC Sindanglaut, UPC Sedong, UPC Karangsembung, atau lokasi baru lainnya).
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleOpenAddUpc}
+                className="px-5 py-3 bg-emerald-800 hover:bg-emerald-900 text-white font-extrabold text-xs rounded-2xl shadow-md transition-all flex items-center gap-2 cursor-pointer shrink-0"
+              >
+                <Plus className="w-4 h-4 text-amber-400" />
+                <span>Buat Acara Seminar Baru</span>
+              </button>
+            </div>
+
+            {/* List of UPC Events */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {(content.upcEvents || []).map((evt) => {
+                return (
+                  <div
+                    key={evt.id}
+                    className="bg-white rounded-3xl border border-slate-200/90 p-5 space-y-4 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="px-2.5 py-1 rounded-md bg-amber-400 text-emerald-950 font-extrabold text-xs uppercase tracking-wider">
+                          {evt.upcName}
+                        </span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          evt.status === 'OPEN'
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                            : 'bg-amber-100 text-amber-800 border-amber-300'
+                        }`}>
+                          {evt.status === 'OPEN' ? 'KUOTA TERSEDIA' : evt.status}
+                        </span>
+                      </div>
+
+                      <h3 className="font-extrabold text-slate-900 text-base leading-snug">
+                        {evt.title}
+                      </h3>
+
+                      <div className="space-y-1.5 text-xs text-slate-600 bg-slate-50 p-3 rounded-2xl border border-slate-200/80">
+                        <div className="flex items-center gap-2 font-extrabold text-emerald-950">
+                          <Calendar className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          <span>{evt.eventDate}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-slate-700">
+                          <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>{evt.eventTime}</span>
+                        </div>
+                        <div className="flex items-start gap-2 pt-1 border-t border-slate-200">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-bold text-slate-900">{evt.venueName}</p>
+                            <p className="text-[11px] text-slate-500 line-clamp-2">{evt.address}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs pt-1">
+                        <span className="text-slate-500 font-medium">Kuota Terisi:</span>
+                        <span className="font-extrabold text-slate-900">
+                          {evt.registered} / {evt.quota} Peserta
+                        </span>
+                      </div>
+
+                      {evt.contactPerson && (
+                        <div className="p-2.5 bg-amber-50/80 rounded-xl border border-amber-200/60 text-xs flex items-center justify-between">
+                          <span className="text-amber-900 font-semibold">{evt.contactPerson}</span>
+                          <span className="text-slate-600 font-mono text-[11px]">{evt.contactPhone}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-200 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditUpc(evt)}
+                        className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Edit className="w-3.5 h-3.5 text-slate-600" />
+                        <span>Edit Detail</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteUpcEvent(evt.id)}
+                        className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl border border-rose-200 transition-colors cursor-pointer"
+                        title="Hapus Acara"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ================= TAB 2: EDIT LANDING PAGE CONTENT ================= */}
+        {activeTab === 'content' && content && (
+          <div className="space-y-8 max-w-4xl mx-auto bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-xs">
+            
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+              <div>
+                <h2 className="text-xl font-extrabold text-slate-900">Pengaturan Tampilan Landing Page</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Edit seluruh komponen landing page: Judul, Jadwal, Lokasi, Fasilitas, Pembicara, Agenda, dan FAQ.</p>
+              </div>
+
+              <button
+                onClick={handleSaveContent}
+                disabled={savingContent}
+                className="px-6 py-2.5 bg-amber-400 hover:bg-amber-300 text-emerald-950 font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer shrink-0"
+              >
+                <Save className="w-4 h-4" />
+                {savingContent ? 'Menyimpan...' : 'Simpan Semua Perubahan'}
+              </button>
+            </div>
+
+            <div className="space-y-8 text-xs sm:text-sm">
+              
+              {/* SECTION 1: Logo & Branding Header */}
+              <div className="space-y-4 pt-2">
+                <div className="flex items-center gap-2">
+                  <Image className="w-4 h-4 text-emerald-700" />
+                  <h3 className="font-bold text-slate-900 text-sm border-l-4 border-emerald-600 pl-2.5">
+                    1. Logo & Identitas Brand Landing Page
+                  </h3>
+                </div>
+
+                <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200/80 space-y-4">
+                  {/* Live Preview Box */}
+                  <div>
+                    <label className="text-xs font-bold text-emerald-900 mb-1.5 block">
+                      Preview Header Logo Landing Page:
+                    </label>
+                    <div className="p-3 bg-white rounded-xl border border-slate-200 flex items-center justify-between shadow-xs">
+                      <div className="flex items-center gap-3">
+                        {content.logoUrl ? (
+                          <img
+                            src={content.logoUrl}
+                            alt={content.logoText || 'Logo'}
+                            className="h-9 w-auto max-w-[120px] object-contain rounded-lg border border-slate-200"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-600 to-emerald-800 p-0.5 shadow-xs shrink-0">
+                            <div className="w-full h-full bg-emerald-900 rounded-[10px] flex items-center justify-center border border-amber-400/40">
+                              <Sparkles className="w-4 h-4 text-amber-400" />
+                            </div>
+                          </div>
+                        )}
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-extrabold text-base text-emerald-950 tracking-tight">
+                              {content.logoText || 'PEGADAIAN'}
+                            </span>
+                            {content.logoBadge && (
+                              <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded border border-amber-300">
+                                {content.logoBadge}
+                              </span>
+                            )}
+                          </div>
+                          {content.logoSubtext && (
+                            <p className="text-[11px] text-emerald-700 font-medium tracking-wide">
+                              {content.logoSubtext}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
+                        Live Preview Header
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Form Inputs */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="font-semibold text-slate-700">
+                        URL Gambar Logo (Opsional - Kosongkan untuk menggunakan Ikon Bawaan)
+                      </label>
+                      <input
+                        type="text"
+                        value={content.logoUrl || ''}
+                        onChange={(e) => setContent({ ...content, logoUrl: e.target.value })}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900 text-xs font-mono focus:border-emerald-600 transition-colors"
+                        placeholder="e.g. https://images.unsplash.com/... atau https://domain.com/logo-pegadaian.png"
+                      />
+                      <p className="text-[11px] text-slate-500">
+                        Gunakan URL gambar berformat PNG / SVG berlatar transparan untuk tampilan logo resmi yang profesional.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700">Teks Nama Brand / Perusahaan</label>
+                      <input
+                        type="text"
+                        value={content.logoText || ''}
+                        onChange={(e) => setContent({ ...content, logoText: e.target.value })}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900 font-bold focus:border-emerald-600 transition-colors"
+                        placeholder="PEGADAIAN"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700">Badge / Label Samping Logo</label>
+                      <input
+                        type="text"
+                        value={content.logoBadge || ''}
+                        onChange={(e) => setContent({ ...content, logoBadge: e.target.value })}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900 font-bold focus:border-emerald-600 transition-colors"
+                        placeholder="EMAS"
+                      />
+                    </div>
+
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="font-semibold text-slate-700">Subteks / Tagline Logo Header</label>
+                      <input
+                        type="text"
+                        value={content.logoSubtext || ''}
+                        onChange={(e) => setContent({ ...content, logoSubtext: e.target.value })}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900 focus:border-emerald-600 transition-colors"
+                        placeholder="Mini Gathering Eksklusif"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 2: Event Titles */}
+              <div className="space-y-4 pt-4 border-t border-slate-200">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-700" />
+                  <h3 className="font-bold text-slate-900 text-sm border-l-4 border-emerald-600 pl-2.5">2. Informasi Utama & Banner Hero</h3>
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700">Judul Landing Page</label>
+                    <input
+                      type="text"
+                      value={content.title}
+                      onChange={(e) => setContent({ ...content, title: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 text-slate-900 focus:bg-white focus:border-emerald-600 transition-colors"
+                      placeholder="Judul Utama Event"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700">Badge Banner Teks</label>
+                    <input
+                      type="text"
+                      value={content.badgeText}
+                      onChange={(e) => setContent({ ...content, badgeText: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 text-slate-900 focus:bg-white focus:border-emerald-600 transition-colors"
+                      placeholder="e.g. Eksklusif • Gratis & Kuota Terbatas"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-semibold text-slate-700">Subjudul / Deskripsi Singkat</label>
+                  <textarea
+                    rows={2}
+                    value={content.subtitle}
+                    onChange={(e) => setContent({ ...content, subtitle: e.target.value })}
+                    className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 text-slate-900 focus:bg-white focus:border-emerald-600 transition-colors"
+                    placeholder="Deskripsi singkat seputar acara..."
+                  />
+                </div>
+              </div>
+
+              {/* SECTION 4: Benefits / Keuntungan */}
+              <div className="space-y-4 pt-6 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Gift className="w-4 h-4 text-emerald-700" />
+                    <h3 className="font-bold text-slate-900 text-sm border-l-4 border-emerald-600 pl-2.5">
+                      4. Fasilitas & Keuntungan Peserta ({content.benefits?.length || 0})
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddBenefit}
+                    className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-bold text-xs rounded-xl flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Tambah Fasilitas
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {(content.benefits || []).map((b, idx) => (
+                    <div key={b.id || idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 relative">
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
+                        <span className="font-bold text-slate-700 text-xs">Fasilitas #{idx + 1}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBenefit(idx)}
+                          className="p-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors"
+                          title="Hapus Fasilitas"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="sm:col-span-2 space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-600">Judul Fasilitas</label>
+                          <input
+                            type="text"
+                            value={b.title}
+                            onChange={(e) => handleUpdateBenefit(idx, 'title', e.target.value)}
+                            className="w-full p-2 border border-slate-300 rounded-xl bg-white text-slate-900"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-600">Ikon</label>
+                          <select
+                            value={b.iconName}
+                            onChange={(e) => handleUpdateBenefit(idx, 'iconName', e.target.value)}
+                            className="w-full p-2 border border-slate-300 rounded-xl bg-white text-slate-900 font-medium"
+                          >
+                            <option value="TrendingUp">TrendingUp (Grafik)</option>
+                            <option value="Tag">Tag (Promo/Diskon)</option>
+                            <option value="Users">Users (Konsultasi)</option>
+                            <option value="Gift">Gift (Hadiah)</option>
+                            <option value="Sparkles">Sparkles (Spesial)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-slate-600">Deskripsi Penjelasan</label>
+                        <textarea
+                          rows={2}
+                          value={b.description}
+                          onChange={(e) => handleUpdateBenefit(idx, 'description', e.target.value)}
+                          className="w-full p-2 border border-slate-300 rounded-xl bg-white text-slate-900"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* SECTION 7: FAQ */}
+              <div className="space-y-4 pt-6 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <HelpCircle className="w-4 h-4 text-emerald-700" />
+                    <h3 className="font-bold text-slate-900 text-sm border-l-4 border-emerald-600 pl-2.5">
+                      7. Pertanyaan & Jawaban FAQ ({content.faq?.length || 0})
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddFaq}
+                    className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-bold text-xs rounded-xl flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Tambah FAQ
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {(content.faq || []).map((f, idx) => (
+                    <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
+                        <span className="font-bold text-slate-700 text-xs">FAQ Item #{idx + 1}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteFaq(idx)}
+                          className="p-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors"
+                          title="Hapus FAQ"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-slate-600">Pertanyaan</label>
+                        <input
+                          type="text"
+                          value={f.question}
+                          onChange={(e) => handleUpdateFaq(idx, 'question', e.target.value)}
+                          className="w-full p-2 border border-slate-300 rounded-xl bg-white text-slate-900 font-medium"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-slate-600">Jawaban</label>
+                        <textarea
+                          rows={2}
+                          value={f.answer}
+                          onChange={(e) => handleUpdateFaq(idx, 'answer', e.target.value)}
+                          className="w-full p-2 border border-slate-300 rounded-xl bg-white text-slate-900"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* SECTION 8: Photo Gallery */}
+              <div className="space-y-4 pt-6 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Camera className="w-4 h-4 text-emerald-700" />
+                    <h3 className="font-bold text-slate-900 text-sm border-l-4 border-emerald-600 pl-2.5">
+                      8. Galeri Foto Dokumentasi Event ({content.gallery?.length || 0})
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddGallery}
+                    className="px-3 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-bold text-xs rounded-xl flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Tambah Foto Dokumentasi
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {(content.gallery || []).map((g, idx) => (
+                    <div key={g.id || idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-200 border border-slate-300 shrink-0">
+                            <img src={g.url} alt={g.title} className="w-full h-full object-cover" />
+                          </div>
+                          <span className="font-bold text-slate-700 text-xs">Foto #{idx + 1}: {g.title || 'Tanpa Judul'}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteGallery(idx)}
+                          className="p-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors"
+                          title="Hapus Foto"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-600">Judul Foto Dokumentasi</label>
+                          <input
+                            type="text"
+                            value={g.title}
+                            onChange={(e) => handleUpdateGallery(idx, 'title', e.target.value)}
+                            className="w-full p-2 border border-slate-300 rounded-xl bg-white text-slate-900 font-medium"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-600">URL Gambar / Foto</label>
+                          <input
+                            type="text"
+                            value={g.url}
+                            onChange={(e) => handleUpdateGallery(idx, 'url', e.target.value)}
+                            className="w-full p-2 border border-slate-300 rounded-xl bg-white text-slate-900 font-mono text-xs"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-semibold text-slate-600">Keterangan / Deskripsi Momen Foto</label>
+                        <textarea
+                          rows={2}
+                          value={g.caption || ''}
+                          onChange={(e) => handleUpdateGallery(idx, 'caption', e.target.value)}
+                          className="w-full p-2 border border-slate-300 rounded-xl bg-white text-slate-900"
+                          placeholder="Penjelasan suasana acara pada foto ini..."
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* SECTION 9: Footer & Contact Center */}
+              <div className="space-y-4 pt-6 border-t border-slate-200">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-emerald-700" />
+                  <h3 className="font-bold text-slate-900 text-sm border-l-4 border-emerald-600 pl-2.5">
+                    9. Informasi Footer, Contact Center & Alamat Kantor
+                  </h3>
+                </div>
+
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700">Deskripsi Singkat Perusahaan (Footer Kiri)</label>
+                    <textarea
+                      rows={2}
+                      value={content.footerDescription || ''}
+                      onChange={(e) => setContent({ ...content, footerDescription: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900"
+                      placeholder="e.g. PT Pegadaian merupakan BUMN keuangan non-bank terpercaya..."
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700">Teks Legalitas & Pengawasan OJK</label>
+                    <input
+                      type="text"
+                      value={content.footerOjkText || ''}
+                      onChange={(e) => setContent({ ...content, footerOjkText: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900 font-medium"
+                      placeholder="Terdaftar & Diawasi oleh Otoritas Jasa Keuangan (OJK)"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700">Alamat Kantor Pusat</label>
+                      <input
+                        type="text"
+                        value={content.footerOfficeAddress || ''}
+                        onChange={(e) => setContent({ ...content, footerOfficeAddress: e.target.value })}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900"
+                        placeholder="Jl. Kramat Raya No. 162, Senen, Jakarta Pusat"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700">Call Center / Telepon CS</label>
+                      <input
+                        type="text"
+                        value={content.footerCallCenter || ''}
+                        onChange={(e) => setContent({ ...content, footerCallCenter: e.target.value })}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900"
+                        placeholder="1500569"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700">Email Humas / Customer Care</label>
+                      <input
+                        type="text"
+                        value={content.footerEmail || ''}
+                        onChange={(e) => setContent({ ...content, footerEmail: e.target.value })}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900"
+                        placeholder="humas@pegadaian.co.id"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700">URL Website Resmi</label>
+                      <input
+                        type="text"
+                        value={content.footerWebsite || ''}
+                        onChange={(e) => setContent({ ...content, footerWebsite: e.target.value })}
+                        className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900"
+                        placeholder="www.pegadaian.co.id"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700">Teks Hak Cipta & Copyright (Garis Bawah)</label>
+                    <input
+                      type="text"
+                      value={content.footerCopyright || ''}
+                      onChange={(e) => setContent({ ...content, footerCopyright: e.target.value })}
+                      className="w-full p-2.5 border border-slate-300 rounded-xl bg-white text-slate-900"
+                      placeholder="© 2026 PT Pegadaian. Hak Cipta Dilindungi Undang-Undang."
+                    />
+                  </div>
+
+                  {/* Services List Management */}
+                  <div className="space-y-2 pt-2 border-t border-slate-200">
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-slate-700 text-xs">
+                        Daftar Layanan Utama Footer (Kolom Tengah)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleAddService}
+                        className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-bold text-[11px] rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" /> Tambah Layanan
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {(content.footerServices || []).map((svc, sIdx) => (
+                        <div key={sIdx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={svc}
+                            onChange={(e) => handleUpdateService(sIdx, e.target.value)}
+                            className="flex-1 p-2 border border-slate-300 rounded-xl bg-white text-slate-900 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteService(sIdx)}
+                            className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors shrink-0"
+                            title="Hapus Layanan"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Submit Footer */}
+              <div className="pt-8 border-t border-slate-200 flex justify-end">
+                <button
+                  onClick={handleSaveContent}
+                  disabled={savingContent}
+                  className="w-full sm:w-auto px-8 py-3.5 bg-amber-400 hover:bg-amber-300 text-emerald-950 font-extrabold text-sm rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Save className="w-4 h-4" />
+                  {savingContent ? 'Menyimpan Perubahan...' : 'Simpan Seluruh Perubahan Landing Page'}
+                </button>
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* ================= TAB 3: ANALYTICS & STATS ================= */}
+        {activeTab === 'stats' && (
+          <div className="space-y-6">
+            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs">
+              <h2 className="text-xl font-extrabold text-slate-900 mb-2">Ringkasan Demografi Pendaftar</h2>
+              <p className="text-xs text-slate-500 mb-6">Visualisasi tipe pekerjaan & profil minat investasi peserta Mini Gathering.</p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Job Category Distribution */}
+                <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200">
+                  <h3 className="font-bold text-slate-800 text-sm mb-4">Distribusi Pekerjaan Peserta</h3>
+                  <div className="space-y-3">
+                    {Object.entries(
+                      participants.reduce((acc, p) => {
+                        acc[p.occupation] = (acc[p.occupation] || 0) + 1;
+                        return acc;
+                      }, {} as Record<string, number>)
+                    ).map(([job, count]) => {
+                      const numericCount = Number(count);
+                      const pct = Math.round((numericCount / (participants.length || 1)) * 100);
+                      return (
+                        <div key={job} className="space-y-1 text-xs">
+                          <div className="flex justify-between font-semibold">
+                            <span>{job}</span>
+                            <span>{count} ({pct}%)</span>
+                          </div>
+                          <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                            <div className="bg-emerald-600 h-full rounded-full" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Investment Goal Distribution */}
+                <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200">
+                  <h3 className="font-bold text-slate-800 text-sm mb-4">Tujuan Utama Investasi Emas</h3>
+                  <div className="space-y-3">
+                    {Object.entries(
+                      participants.reduce((acc, p) => {
+                        acc[p.investmentGoal] = (acc[p.investmentGoal] || 0) + 1;
+                        return acc;
+                      }, {} as Record<string, number>)
+                    ).map(([goal, count]) => {
+                      const numericCount = Number(count);
+                      const pct = Math.round((numericCount / (participants.length || 1)) * 100);
+                      return (
+                        <div key={goal} className="space-y-1 text-xs">
+                          <div className="flex justify-between font-semibold">
+                            <span>{goal}</span>
+                            <span>{count} ({pct}%)</span>
+                          </div>
+                          <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                            <div className="bg-amber-500 h-full rounded-full" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        )}
+
+      </main>
+
+      {/* MODAL: ADD MANUAL PARTICIPANT */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-200 space-y-4">
+            <h3 className="text-lg font-bold text-slate-900">Tambah Peserta Manual (Admin)</h3>
+            
+            <form onSubmit={handleAddManualParticipant} className="space-y-3 text-xs">
+              <div>
+                <label className="font-semibold text-slate-700">Nama Lengkap *</label>
+                <input
+                  type="text"
+                  required
+                  value={manualForm.fullName}
+                  onChange={(e) => setManualForm({ ...manualForm, fullName: e.target.value })}
+                  className="w-full p-2 border rounded-xl bg-slate-50"
+                  placeholder="Nama Peserta"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700">No. WhatsApp *</label>
+                <input
+                  type="tel"
+                  required
+                  value={manualForm.phone}
+                  onChange={(e) => setManualForm({ ...manualForm, phone: e.target.value })}
+                  className="w-full p-2 border rounded-xl bg-slate-50"
+                  placeholder="0812345678"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700">Email</label>
+                <input
+                  type="email"
+                  value={manualForm.email}
+                  onChange={(e) => setManualForm({ ...manualForm, email: e.target.value })}
+                  className="w-full p-2 border rounded-xl bg-slate-50"
+                  placeholder="email@domain.com"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="font-semibold text-slate-700">Pekerjaan</label>
+                  <input
+                    type="text"
+                    value={manualForm.occupation}
+                    onChange={(e) => setManualForm({ ...manualForm, occupation: e.target.value })}
+                    className="w-full p-2 border rounded-xl bg-slate-50"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-slate-700">Jumlah Kehadiran</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={manualForm.attendanceCount}
+                    onChange={(e) => setManualForm({ ...manualForm, attendanceCount: Number(e.target.value) })}
+                    className="w-full p-2 border rounded-xl bg-slate-50 font-bold"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-200 font-bold text-slate-700"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-700 font-bold text-white shadow-sm"
+                >
+                  Simpan Peserta
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DETAIL PARTICIPANT */}
+      {selectedParticipant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex justify-between items-center border-b pb-3">
+              <div>
+                <p className="text-[10px] font-bold text-emerald-800 uppercase">Detail Data Peserta</p>
+                <h3 className="text-lg font-bold text-slate-900">{selectedParticipant.fullName}</h3>
+              </div>
+              <button onClick={() => setSelectedParticipant(null)} className="text-slate-400 hover:text-slate-700">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2 text-xs text-slate-700">
+              <p><strong>Kode Tiket:</strong> {selectedParticipant.registrationCode}</p>
+              <p><strong>WhatsApp:</strong> {selectedParticipant.phone}</p>
+              <p><strong>Email:</strong> {selectedParticipant.email}</p>
+              <p><strong>Pekerjaan:</strong> {selectedParticipant.occupation}</p>
+              <p><strong>Cabang Pegadaian:</strong> {selectedParticipant.branch}</p>
+              <p><strong>Tujuan Investasi:</strong> {selectedParticipant.investmentGoal}</p>
+              <p><strong>Jumlah Kehadiran:</strong> {selectedParticipant.attendanceCount} Orang</p>
+              <p><strong>Status:</strong> {selectedParticipant.status}</p>
+              <p><strong>Catatan:</strong> {selectedParticipant.notes || '-'}</p>
+              <p><strong>Tanggal Mendaftar:</strong> {new Date(selectedParticipant.createdAt).toLocaleString('id-ID')}</p>
+            </div>
+
+            <div className="flex gap-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => openDeleteSingleModal(selectedParticipant)}
+                className="flex-1 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                Hapus Peserta Ini
+              </button>
+              <button
+                onClick={() => setSelectedParticipant(null)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 font-bold text-slate-800 text-xs transition-colors cursor-pointer"
+              >
+                Tutup Modal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL BUAT / EDIT ACARA SEMINAR */}
+      {showUpcModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 space-y-6 border border-slate-200 shadow-2xl relative my-8 max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowUpcModal(false)}
+              className="absolute top-5 right-5 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="space-y-1">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold uppercase">
+                <Building2 className="w-3.5 h-3.5 text-emerald-600" />
+                Form Manajemen Acara Seminar
+              </div>
+              <h3 className="text-xl font-extrabold text-slate-900">
+                {editingUpcId ? 'Edit Jadwal Acara Seminar' : 'Buat Acara Seminar Baru'}
+              </h3>
+              <p className="text-xs text-slate-500">
+                Tentukan lokasi, waktu, kuota, dan fasilitas acara seminar/gathering di Cabang atau UPC terkait.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs sm:text-sm">
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800">Nama Cabang / UPC *</label>
+                <input
+                  type="text"
+                  value={upcForm.upcName}
+                  onChange={(e) => setUpcForm({ ...upcForm, upcName: e.target.value })}
+                  placeholder="e.g. CP Ciledug atau UPC Pabuaran"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors font-bold text-slate-900"
+                />
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {['CP Ciledug', 'UPC Pabuaran', 'UPC Sindanglaut', 'UPC Sedong', 'UPC Karangsembung'].map((suggest) => (
+                    <button
+                      key={suggest}
+                      type="button"
+                      onClick={() => setUpcForm({ ...upcForm, upcName: suggest, code: suggest.replace(/[^A-Z]/g, '') || 'UPC-NEW' })}
+                      className="px-2 py-0.5 bg-slate-100 hover:bg-amber-100 text-[10px] font-semibold rounded text-slate-700 cursor-pointer"
+                    >
+                      + {suggest}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800">Kode Acara / UPC</label>
+                <input
+                  type="text"
+                  value={upcForm.code}
+                  onChange={(e) => setUpcForm({ ...upcForm, code: e.target.value })}
+                  placeholder="e.g. CP-CLDG atau UPC-PBRN"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors uppercase font-mono text-slate-900"
+                />
+              </div>
+
+              <div className="space-y-1 sm:col-span-2">
+                <label className="font-bold text-slate-800">Judul Seminar / Acara *</label>
+                <input
+                  type="text"
+                  value={upcForm.title}
+                  onChange={(e) => setUpcForm({ ...upcForm, title: e.target.value })}
+                  placeholder="e.g. Mini Gathering & Edukasi Investasi Emas UPC Pabuaran"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors font-bold text-slate-900"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800">Tanggal Pelaksanaan *</label>
+                <input
+                  type="text"
+                  value={upcForm.eventDate}
+                  onChange={(e) => setUpcForm({ ...upcForm, eventDate: e.target.value })}
+                  placeholder="e.g. Kamis, 20 Agustus 2026"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors text-slate-900"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800">Waktu Pelaksanaan *</label>
+                <input
+                  type="text"
+                  value={upcForm.eventTime}
+                  onChange={(e) => setUpcForm({ ...upcForm, eventTime: e.target.value })}
+                  placeholder="e.g. 09:00 - 12:00 WIB"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors text-slate-900"
+                />
+              </div>
+
+              <div className="space-y-1 sm:col-span-2">
+                <label className="font-bold text-slate-800">Nama Gedung / Venue *</label>
+                <input
+                  type="text"
+                  value={upcForm.venueName}
+                  onChange={(e) => setUpcForm({ ...upcForm, venueName: e.target.value })}
+                  placeholder="e.g. Gedung Pertemuan Pegadaian UPC Pabuaran"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors text-slate-900"
+                />
+              </div>
+
+              <div className="space-y-1 sm:col-span-2">
+                <label className="font-bold text-slate-800">Alamat Lengkap Venue</label>
+                <textarea
+                  rows={2}
+                  value={upcForm.address}
+                  onChange={(e) => setUpcForm({ ...upcForm, address: e.target.value })}
+                  placeholder="e.g. Jl. Raya Pabuaran No. 18, Cirebon"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors text-slate-900"
+                />
+              </div>
+
+              <div className="space-y-1 sm:col-span-2">
+                <label className="font-bold text-slate-800">Link Google Maps (URL)</label>
+                <input
+                  type="text"
+                  value={upcForm.mapUrl}
+                  onChange={(e) => setUpcForm({ ...upcForm, mapUrl: e.target.value })}
+                  placeholder="https://maps.google.com/?q=Pegadaian+Pabuaran"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors text-slate-900"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800">Kuota Maksimal Peserta</label>
+                <input
+                  type="number"
+                  min={10}
+                  max={500}
+                  value={upcForm.quota}
+                  onChange={(e) => setUpcForm({ ...upcForm, quota: parseInt(e.target.value) || 50 })}
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors font-bold text-slate-900"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800">Status Ketersediaan</label>
+                <select
+                  value={upcForm.status}
+                  onChange={(e) => setUpcForm({ ...upcForm, status: e.target.value as any })}
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors font-bold text-slate-900"
+                >
+                  <option value="OPEN">OPEN (Kuota Tersedia)</option>
+                  <option value="LIMITED">LIMITED (Sisa Kuota Terbatas)</option>
+                  <option value="FULL">FULL (Kuota Penuh)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800">Nama Penanggung Jawab / Panitia</label>
+                <input
+                  type="text"
+                  value={upcForm.contactPerson}
+                  onChange={(e) => setUpcForm({ ...upcForm, contactPerson: e.target.value })}
+                  placeholder="e.g. Bapak Rahmat (Kepala UPC)"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors text-slate-900"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-800">Nomor WA Panitia (Tanpa +)</label>
+                <input
+                  type="text"
+                  value={upcForm.contactPhone}
+                  onChange={(e) => setUpcForm({ ...upcForm, contactPhone: e.target.value })}
+                  placeholder="6281234567890"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors text-slate-900 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1 sm:col-span-2">
+                <label className="font-bold text-slate-800">Deskripsi Ringkas Seminar</label>
+                <textarea
+                  rows={2}
+                  value={upcForm.description}
+                  onChange={(e) => setUpcForm({ ...upcForm, description: e.target.value })}
+                  placeholder="Uraikan topik utama dan daya tarik acara seminar ini..."
+                  className="w-full p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors text-slate-900"
+                />
+              </div>
+
+              {/* Fasilitas & Promo List */}
+              <div className="space-y-2 sm:col-span-2">
+                <label className="font-bold text-slate-800">Fasilitas & Promo Khusus UPC</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={benefitInput}
+                    onChange={(e) => setBenefitInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (benefitInput.trim()) {
+                          setUpcForm({ ...upcForm, specialBenefits: [...(upcForm.specialBenefits || []), benefitInput.trim()] });
+                          setBenefitInput('');
+                        }
+                      }
+                    }}
+                    placeholder="e.g. Gratis Saldo Awal Tabungan Emas (Tekan Enter)"
+                    className="flex-1 p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-600 transition-colors text-slate-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (benefitInput.trim()) {
+                        setUpcForm({ ...upcForm, specialBenefits: [...(upcForm.specialBenefits || []), benefitInput.trim()] });
+                        setBenefitInput('');
+                      }
+                    }}
+                    className="px-4 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-xs cursor-pointer"
+                  >
+                    Tambah
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {(upcForm.specialBenefits || []).map((bnf, bIdx) => (
+                    <span
+                      key={bIdx}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-900 font-bold text-xs rounded-full border border-amber-300"
+                    >
+                      <span>{bnf}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUpcForm({
+                            ...upcForm,
+                            specialBenefits: (upcForm.specialBenefits || []).filter((_, i) => i !== bIdx)
+                          });
+                        }}
+                        className="text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowUpcModal(false)}
+                className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveUpcEvent}
+                className="px-6 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-emerald-950 font-extrabold text-xs shadow-md transition-all cursor-pointer flex items-center gap-2"
+              >
+                <Save className="w-4 h-4" />
+                <span>Simpan Acara Seminar</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL KONFIRMASI HAPUS PESERTA (SINGLE & BATCH) */}
+      {deleteConfirmModal?.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-rose-100 space-y-5 animate-scale-up">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0 border border-rose-200 shadow-xs">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-extrabold text-slate-900">{deleteConfirmModal.title}</h3>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">{deleteConfirmModal.description}</p>
+              </div>
+            </div>
+
+            {/* Preview Participant List */}
+            {deleteConfirmModal.itemsPreview.length > 0 && (
+              <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200 max-h-48 overflow-y-auto space-y-2">
+                <p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                  Daftar Peserta Yang Akan Dihapus ({deleteConfirmModal.ids.length}):
+                </p>
+                {deleteConfirmModal.itemsPreview.slice(0, 5).map(item => (
+                  <div key={item.id} className="flex items-center justify-between bg-white p-2 rounded-xl border border-slate-200/80 text-xs shadow-2xs">
+                    <div>
+                      <span className="font-bold text-slate-900 block">{item.name}</span>
+                      <span className="text-[10px] text-slate-500 block">{item.branch} • Tiket: {item.code}</span>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${
+                      item.status === 'Verified' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' :
+                      item.status === 'Attended' ? 'bg-blue-100 text-blue-800 border-blue-300' :
+                      item.status === 'Cancelled' ? 'bg-rose-100 text-rose-800 border-rose-300' :
+                      'bg-amber-100 text-amber-800 border-amber-300'
+                    }`}>
+                      {item.status}
+                    </span>
+                  </div>
+                ))}
+                {deleteConfirmModal.ids.length > 5 && (
+                  <p className="text-center text-xs font-semibold text-slate-500 pt-1">
+                    + {deleteConfirmModal.ids.length - 5} peserta lainnya
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p>Data peserta yang dihapus tidak dapat dikembalikan. Kuota pendaftaran akan kembali terbuka otomatis di server.</p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setDeleteConfirmModal(null)}
+                disabled={deleteConfirmModal.isDeleting}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-slate-700 text-xs transition-colors cursor-pointer"
+              >
+                Batalkan
+              </button>
+              <button
+                onClick={executeDeleteConfirm}
+                disabled={deleteConfirmModal.isDeleting}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-2 shadow-md transition-all cursor-pointer disabled:opacity-50"
+              >
+                {deleteConfirmModal.isDeleting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Menghapus...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Ya, Hapus ({deleteConfirmModal.ids.length}) Peserta
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QR Check-In Scanner Modal */}
+      <QrCheckInModal
+        isOpen={showQrScanner}
+        onClose={() => setShowQrScanner(false)}
+        participants={participants}
+        onUpdateStatus={handleUpdateStatus}
+      />
+
+    </div>
+  );
+};
